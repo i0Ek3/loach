@@ -23,18 +23,6 @@ import (
 var (
 	p Pool
 	m Machine
-
-	R Retry
-	A Attempt
-
-	// for command line use
-	list string
-	port int
-)
-
-type (
-	Attempt int
-	Retry   int
 )
 
 type Machine struct {
@@ -123,6 +111,7 @@ func (p *Pool) GetMaximumWeightMachine(url *url.URL) *Machine {
 	for i, m := range p.ma {
 		if m.Weight == mx.Tmax(weights) {
 			atomic.StoreUint64(&p.current, uint64(i))
+
 			return m
 		}
 	}
@@ -147,6 +136,7 @@ func (p *Pool) GetMininumConnectionMachine(url *url.URL) *Machine {
 	for i, m := range p.ma {
 		if m.Connection == mx.Tmin(connections) {
 			atomic.StoreUint64(&p.current, uint64(i))
+
 			return m
 		}
 	}
@@ -160,8 +150,9 @@ func (p *Pool) HeartbeatCheck() {
 		m.SetAlive(alive)
 		if !alive {
 			log.Printf("machine %s already down\n", m.URL)
+		} else {
+			log.Printf("machine %s still alive", m.URL)
 		}
-		log.Printf("machine %s still alive", m.URL)
 	}
 }
 
@@ -176,6 +167,16 @@ func HeartbeatCheckWithTimer() {
 		}
 	}
 }
+
+type (
+	Attempt int
+	Retry   int
+)
+
+var (
+	R Retry
+	A Attempt
+)
 
 func GetRetryFromContext(req *http.Request) int {
 	if retry, ok := req.Context().Value(R).(int); ok {
@@ -195,7 +196,7 @@ func GetAttemptFromContext(req *http.Request) int {
 
 func AttemptHelper(w http.ResponseWriter, req *http.Request) {
 	attempt := GetAttemptFromContext(req)
-	if attempt > 3 {
+	if attempt > times {
 		log.Printf("%s(%s) reached maximum attempt times, terminating...\n", req.RemoteAddr, req.URL.Path)
 		http.Error(w, "machine unavailable", http.StatusServiceUnavailable)
 
@@ -257,25 +258,13 @@ func isMachineAlive(url *url.URL) bool {
 	timeout := 3 * time.Second
 	conn, err := net.DialTimeout("tcp", url.Host, timeout)
 	if err != nil {
-		log.Println("machine unreachable, error: ", err)
+		log.Println("machine unreachable, error:", err)
 
 		return false
 	}
 	defer conn.Close()
 
 	return true
-}
-
-func init() {
-
-	// 24022 =  l  o a c h
-	//   26 %  12 15 1 3 8
-	// 			2  4 0 2 2
-
-	flag.StringVar(&list, "list", "", "load balanced machines, i.e. http://:24023,http://:24024,...")
-	flag.IntVar(&port, "port", 24022, "available port to serve")
-
-	flag.Parse()
 }
 
 type F func(http.ResponseWriter, *http.Request)
@@ -288,6 +277,7 @@ func getFuncName(v any, delimiter ...rune) string {
 				return true
 			}
 		}
+
 		return false
 	})
 	if l := len(fields); l > 0 {
@@ -297,7 +287,15 @@ func getFuncName(v any, delimiter ...rune) string {
 	return ""
 }
 
-func (p *Pool) run(f F) {
+var (
+	// for command line use
+	list  string
+	port  int
+	times int
+	mode  string
+)
+
+func run(f F) {
 	if len(list) == 0 {
 		log.Fatal("the number of machine must >= 1 then load balance works")
 	}
@@ -313,7 +311,7 @@ func (p *Pool) run(f F) {
 		pxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
 			log.Printf("[%s] %s\n", url.Host, err.Error())
 			retry := GetRetryFromContext(req)
-			if retry < 3 {
+			if retry < times {
 				select {
 				case <-time.After(10 * time.Millisecond):
 					ctx := context.WithValue(req.Context(), R, retry+1)
@@ -352,9 +350,28 @@ func (p *Pool) run(f F) {
 	}
 }
 
-func main() {
-	var p Pool
+func init() {
+	// 24022 =  l  o a c h
+	//   26 %  12 15 1 3 8
+	// 			2  4 0 2 2
 
-	// optional RR, WRR, LC
-	p.run(WRR)
+	flag.StringVar(&list, "list", "", "load balanced machines, i.e. http://:24023,http://:24024,...")
+	flag.IntVar(&port, "port", 24022, "available port to serve")
+	flag.IntVar(&times, "times", 3, "retry times")
+	flag.StringVar(&mode, "mode", "RR", "load balance strategy, optional WRR, LC")
+
+	flag.Parse()
+}
+
+func main() {
+	var f F
+	switch mode {
+	case "WRR":
+		f = WRR
+	case "LC":
+		f = LC
+	default:
+		f = RR
+	}
+	run(f)
 }
