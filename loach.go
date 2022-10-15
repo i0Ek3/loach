@@ -131,7 +131,7 @@ func (p *Pool) GetMachineConnections(url *url.URL) (connections []int) {
 	return
 }
 
-func (p *Pool) GetMininumConnectionMachine(url *url.URL) *Machine {
+func (p *Pool) GetMinimumConnectionMachine(url *url.URL) *Machine {
 	connections := p.GetMachineConnections(url)
 	for i, m := range p.ma {
 		if m.Connection == mx.Tmin(connections) {
@@ -151,7 +151,7 @@ func (p *Pool) HeartbeatCheck() {
 		if !alive {
 			log.Printf("machine %s already down\n", m.URL)
 		} else {
-			log.Printf("machine %s still alive", m.URL)
+			log.Printf("machine %s still alive\n", m.URL)
 		}
 	}
 }
@@ -244,7 +244,7 @@ func LC(w http.ResponseWriter, req *http.Request) {
 
 func leastConnections(w http.ResponseWriter, req *http.Request) {
 	AttemptHelper(w, req)
-	machine := p.GetMininumConnectionMachine(req.URL)
+	machine := p.GetMinimumConnectionMachine(req.URL)
 	if machine != nil {
 		machine.Reverse.ServeHTTP(w, req)
 		machine.Connection += 1
@@ -351,8 +351,9 @@ func run(f F) {
 }
 
 func init() {
+
 	// 24022 =  l  o a c h
-	//   26 %  12 15 1 3 8
+	//    26 % 12 15 1 3 8
 	// 			2  4 0 2 2
 
 	flag.StringVar(&list, "list", "", "load balanced machines, i.e. http://:24023,http://:24024,...")
